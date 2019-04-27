@@ -29,8 +29,8 @@ action_size = env.action_space.n
 learning_rate = 0.00025
 
 # TRAINING HYPERPARAMETERS
-total_episodes = 10  # Total episodes for training
-max_steps = 3  # Max possible steps in an episode
+total_episodes = 30  # Total episodes for training
+max_steps = 10000  # Max possible steps in an episode
 batch_size = 64
 
 # Exploration parameters for epsilon greedy strategy
