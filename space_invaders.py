@@ -4,10 +4,14 @@ import torch
 import torch.optim as optim
 import torch.nn.functional as F
 import random
-import model
-from memory import *
-from frame_utils import stack_frames
+import frame_utils, model, memory
 
+
+device = None
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+else:
+    device = torch.device('cpu')
 
 env = gym.make('SpaceInvaders-v0')
 
@@ -19,7 +23,7 @@ action_size = env.action_space.n
 learning_rate = 0.00025
 
 # TRAINING HYPERPARAMETERS
-total_episodes = 1  # Total episodes for training
+total_episodes = 10  # Total episodes for training
 max_steps = 50000  # Max possible steps in an episode
 batch_size = 64
 
@@ -42,27 +46,27 @@ stack_size = 4  # Number of frames stacked
 training = True
 
 # TURN THIS TO TRUE IF YOU WANT TO RENDER THE ENVIRONMENT
-render_episode = False
+render_episode = True
 
 target_update = 10
 
 if __name__ == '__main__':
 
-    state, frames_stack = stack_frames(env.reset())
+    state, frames_stack = frame_utils.stack_frames(env.reset())
 
     empty_state = np.zeros_like(state, dtype=np.int)
 
     _, in_h, in_w = state.shape
 
-    policy_net = model.DQNetwork(state_size, action_size, in_h, in_w)
-    target_net = model.DQNetwork(state_size, action_size, in_h, in_w)
+    policy_net = model.DQNetwork(state_size, action_size, in_h, in_w).to(device)
+    target_net = model.DQNetwork(state_size, action_size, in_h, in_w).to(device)
     target_net.load_state_dict(policy_net.state_dict())
     target_net.eval()
 
     optimizer = optim.RMSprop(policy_net.parameters())
 
     # Memory initialization
-    memory = ReplayMemory(memory_size)
+    mem = memory.ReplayMemory(memory_size)
 
     # Initially fill the memory with random transitions
     for i in range(pretrain_length):
@@ -72,14 +76,14 @@ if __name__ == '__main__':
 
         if done:
             next_state = empty_state
-            memory.push(state, random_action, next_state, reward, done)  # add experience to the memory
+            mem.push(state, random_action, next_state, reward, done)  # add experience to the memory
 
             # Start a new episode.
-            state, frames_stack = stack_frames(env.reset())
+            state, frames_stack = frame_utils.stack_frames(env.reset())
 
         else:
-            next_state, frames_stack = stack_frames(next_state, frames_stack)
-            memory.push(state, random_action, next_state, reward, done)
+            next_state, frames_stack = frame_utils.stack_frames(next_state, frames_stack)
+            mem.push(state, random_action, next_state, reward, done)
             state = next_state
 
     steps_done = 0
@@ -95,26 +99,26 @@ if __name__ == '__main__':
             action_choice = random.choice(actions)
         else:
             with torch.no_grad():
-                qs = policy_net(torch.from_numpy(in_state.reshape((1, *state.shape))).float())
-                best_action_idx = np.argmax(qs)
+                qs = policy_net(torch.from_numpy(in_state.reshape((1, *state.shape))).float().to(device))
+                best_action_idx = np.argmax(qs.cpu())
                 action_choice = actions[best_action_idx]
 
         return action_choice, exp_prob
 
     def optimize_model():
-        transitions = memory.sample(batch_size)
-        batch = Transition(*zip(*transitions))
-        states_batch = torch.tensor(batch.state)
-        actions_batch = torch.tensor(batch.action)
-        rewards_batch = torch.tensor(batch.reward)
-        next_states_batch = torch.tensor(batch.next_state)
+        transitions = mem.sample(batch_size)
+        batch = memory.Transition(*zip(*transitions))
+        states_batch = torch.tensor(batch.state).to(device)
+        actions_batch = torch.tensor(batch.action).to(device)
+        rewards_batch = torch.tensor(batch.reward).to(device)
+        next_states_batch = torch.tensor(batch.next_state).to(device)
 
-        non_terminal_mask = ~torch.tensor(tuple(batch.done))
+        non_terminal_mask = ~torch.tensor(tuple(batch.done)).to(device)
 
-        current_q_values = policy_net(states_batch.float()).mul(actions_batch.float()).sum(1)
+        current_q_values = policy_net(states_batch.float().to(device)).mul(actions_batch.float().to(device)).sum(1)
 
         next_q_values = rewards_batch
-        next_q_values[non_terminal_mask] = target_net(next_states_batch.float()).max(1)[0]
+        next_q_values[non_terminal_mask] = target_net(next_states_batch.float().to(device)).max(1)[0][non_terminal_mask]
         next_q_values_expected = (next_q_values * gamma) + rewards_batch
 
         loss = F.smooth_l1_loss(current_q_values, next_q_values_expected)
@@ -129,7 +133,7 @@ if __name__ == '__main__':
     if training:
         for episode in range(total_episodes):
             episode_rewards = []
-            state, frames_stack = stack_frames(env.reset())
+            state, frames_stack = frame_utils.stack_frames(env.reset())
 
             for step in range(max_steps):
                 action, explore_prob = predict_action(state)
@@ -143,9 +147,9 @@ if __name__ == '__main__':
                 if done:
                     next_state = empty_state
                 else:
-                    next_state, frames_stack = stack_frames(next_state, frames_stack)
+                    next_state, frames_stack = frame_utils.stack_frames(next_state, frames_stack)
 
-                memory.push(state, action, next_state, reward, done)
+                mem.push(state, action, next_state, reward, done)
                 state = next_state
 
                 optimize_model()
