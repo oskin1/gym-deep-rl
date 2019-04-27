@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import gym
 import torch
@@ -8,10 +10,14 @@ import frame_utils, model, memory
 
 
 device = None
+
 if torch.cuda.is_available():
     device = torch.device('cuda')
 else:
     device = torch.device('cpu')
+
+save_dir = 'data/'
+training_state_file = 'train_state.pt'
 
 env = gym.make('SpaceInvaders-v0')
 
@@ -24,7 +30,7 @@ learning_rate = 0.00025
 
 # TRAINING HYPERPARAMETERS
 total_episodes = 10  # Total episodes for training
-max_steps = 50000  # Max possible steps in an episode
+max_steps = 3  # Max possible steps in an episode
 batch_size = 64
 
 # Exploration parameters for epsilon greedy strategy
@@ -58,15 +64,27 @@ if __name__ == '__main__':
 
     _, in_h, in_w = state.shape
 
-    policy_net = model.DQNetwork(state_size, action_size, in_h, in_w).to(device)
-    target_net = model.DQNetwork(state_size, action_size, in_h, in_w).to(device)
-    target_net.load_state_dict(policy_net.state_dict())
-    target_net.eval()
+    try:
+        checkpoint = torch.load(os.path.join(save_dir, training_state_file))
+    except FileNotFoundError:
+        checkpoint = None
 
+    policy_net = model.DQNetwork(state_size, action_size, in_h, in_w).to(device)
     optimizer = optim.RMSprop(policy_net.parameters())
 
     # Memory initialization
     mem = memory.ReplayMemory(memory_size)
+
+    if checkpoint is not None:
+        policy_net.load_state_dict(checkpoint['policy_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        policy_net.eval()
+        for transition in checkpoint['memory']:
+            mem.push(*transition)
+
+    target_net = model.DQNetwork(state_size, action_size, in_h, in_w).to(device)
+    target_net.load_state_dict(policy_net.state_dict())
+    target_net.eval()
 
     # Initially fill the memory with random transitions
     for i in range(pretrain_length):
@@ -165,6 +183,14 @@ if __name__ == '__main__':
 
             if episode % target_update == 0:
                 target_net.load_state_dict(policy_net.state_dict())
+
+            torch.save({
+                'episode': episode,
+                'policy_state_dict': policy_net.state_dict(),
+                'target_state_dict': target_net.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'memory': mem.state_dict()
+            }, os.path.join(save_dir, training_state_file))
 
     print('Complete')
     env.render()
