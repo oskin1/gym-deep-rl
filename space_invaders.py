@@ -30,7 +30,7 @@ learning_rate = 0.00025
 
 # TRAINING HYPERPARAMETERS
 total_episodes = 30  # Total episodes for training
-max_steps = 10000  # Max possible steps in an episode
+max_steps = 50000  # Max possible steps in an episode
 batch_size = 64
 
 # Exploration parameters for epsilon greedy strategy
@@ -43,7 +43,7 @@ gamma = 0.9  # Discounting rate
 
 # MEMORY HYPERPARAMETERS
 pretrain_length = batch_size  # Number of experiences stored in the Memory when initialized for the first time
-memory_size = 1000000  # Number of experiences the Memory can keep
+memory_size = 50000  # Number of experiences the Memory can keep
 
 # PREPROCESSING HYPERPARAMETERS
 stack_size = 4  # Number of frames stacked
@@ -52,7 +52,7 @@ stack_size = 4  # Number of frames stacked
 training = True
 
 # TURN THIS TO TRUE IF YOU WANT TO RENDER THE ENVIRONMENT
-render_episode = True
+render_episode = False
 
 target_update = 10
 
@@ -75,12 +75,17 @@ if __name__ == '__main__':
     # Memory initialization
     mem = memory.ReplayMemory(memory_size)
 
+    episodes_done = 0
+    steps_done = 0
+
     if checkpoint is not None:
         policy_net.load_state_dict(checkpoint['policy_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         policy_net.eval()
-        for transition in checkpoint['memory']:
-            mem.push(*transition)
+        episodes_done = checkpoint['episode']
+        steps_done = checkpoint['steps_done']
+
+        print(f'Restoring from latest checkpoint, episode {episodes_done + 1}')
 
     target_net = model.DQNetwork(state_size, action_size, in_h, in_w).to(device)
     target_net.load_state_dict(policy_net.state_dict())
@@ -104,7 +109,6 @@ if __name__ == '__main__':
             mem.push(state, random_action, next_state, reward, done)
             state = next_state
 
-    steps_done = 0
 
     def predict_action(in_state):
         global steps_done
@@ -149,7 +153,7 @@ if __name__ == '__main__':
         optimizer.step()
 
     if training:
-        for episode in range(total_episodes):
+        for episode in range(episodes_done + 1, total_episodes):
             episode_rewards = []
             state, frames_stack = frame_utils.stack_frames(env.reset())
 
@@ -177,7 +181,8 @@ if __name__ == '__main__':
 
                     print('Episode: {}'.format(episode),
                           'Total reward: {}'.format(total_reward),
-                          'Explore P: {:.4f}'.format(explore_prob))
+                          'Explore P: {:.4f}'.format(explore_prob),
+                          'Steps done: {}'.format(step))
 
                     break
 
@@ -186,10 +191,9 @@ if __name__ == '__main__':
 
             torch.save({
                 'episode': episode,
+                'steps_done': steps_done,
                 'policy_state_dict': policy_net.state_dict(),
-                'target_state_dict': target_net.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'memory': mem.state_dict()
+                'optimizer': optimizer.state_dict()
             }, os.path.join(save_dir, training_state_file))
 
     print('Complete')
